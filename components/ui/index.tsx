@@ -4,7 +4,7 @@ import React, { type ButtonHTMLAttributes, forwardRef } from "react";
 
 // ─── Button ──────────────────────────────────────────────────────────
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+type ButtonVariant = "primary" | "secondary" | "success" | "danger" | "ghost";
 type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -15,19 +15,21 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-600 shadow-sm",
+    "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-600 shadow-sm border border-transparent",
   secondary:
-    "bg-white text-slate-900 border border-slate-300 hover:bg-slate-50 focus:ring-blue-600",
+    "bg-white text-slate-900 border border-slate-300 hover:bg-slate-50 focus:ring-blue-600 shadow-sm",
+  success:
+    "bg-green-600 text-white hover:bg-green-700 focus:ring-green-600 shadow-sm border border-transparent",
   danger:
-    "bg-red-600 text-white hover:bg-red-700 focus:ring-red-600 shadow-sm",
+    "bg-red-600 text-white hover:bg-red-700 focus:ring-red-600 shadow-sm border border-transparent",
   ghost:
-    "bg-transparent text-slate-700 hover:bg-slate-100 focus:ring-blue-600",
+    "bg-transparent text-slate-700 hover:bg-slate-100 focus:ring-blue-600 border border-transparent",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-sm",
-  md: "px-4 py-2 text-sm",
-  lg: "px-6 py-3 text-base",
+  sm: "px-3 py-1.5 text-xs font-medium",
+  md: "px-4 py-2 text-sm font-medium",
+  lg: "px-6 py-2.5 text-base font-semibold",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -51,10 +53,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={isDisabled}
         className={`
           inline-flex items-center justify-center gap-2
-          rounded-lg font-medium
-          transition-all duration-150
+          rounded-lg transition-all duration-150 cursor-pointer
           focus:outline-none focus:ring-2 focus:ring-offset-2
-          disabled:opacity-50 disabled:cursor-not-allowed
+          disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:border-transparent
           ${variantClasses[variant]}
           ${sizeClasses[size]}
           ${className}
@@ -96,10 +97,11 @@ Button.displayName = "Button";
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
+  helperText?: string;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, id, className = "", ...props }, ref) => {
+  ({ label, error, helperText, id, className = "", ...props }, ref) => {
     const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
 
     return (
@@ -107,7 +109,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-sm font-medium text-slate-700"
+            className="block text-sm font-medium text-slate-800"
           >
             {label}
           </label>
@@ -119,19 +121,22 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             block w-full rounded-lg
             border border-slate-300
             px-3 py-2
-            text-slate-950 placeholder-slate-400
+            text-slate-900 placeholder:text-slate-500
             bg-white
             shadow-sm
             transition-colors duration-150
             focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600
             disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed
-            ${error ? "border-red-500 focus:ring-red-500" : ""}
+            ${error ? "border-red-500 focus:ring-red-500 focus:border-red-500" : ""}
             ${className}
           `.trim()}
           {...props}
         />
+        {helperText && !error && (
+          <p className="text-xs text-slate-500 mt-1">{helperText}</p>
+        )}
         {error && (
-          <p className="text-sm text-red-600 mt-1">{error}</p>
+          <p className="text-xs font-medium text-red-600 mt-1">{error}</p>
         )}
       </div>
     );
@@ -158,7 +163,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         {label && (
           <label
             htmlFor={selectId}
-            className="block text-sm font-medium text-slate-700"
+            className="block text-sm font-medium text-slate-800"
           >
             {label}
           </label>
@@ -170,30 +175,30 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             block w-full rounded-lg
             border border-slate-300
             px-3 py-2
-            text-slate-950
+            text-slate-900
             bg-white
             shadow-sm
             transition-colors duration-150
             focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600
             disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed
-            ${error ? "border-red-500 focus:ring-red-500" : ""}
+            ${error ? "border-red-500 focus:ring-red-500 focus:border-red-500" : ""}
             ${className}
           `.trim()}
           {...props}
         >
           {placeholder && (
-            <option value="" disabled>
+            <option value="" disabled className="text-slate-400">
               {placeholder}
             </option>
           )}
           {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>
+            <option key={opt.value} value={opt.value} className="text-slate-900">
               {opt.label}
             </option>
           ))}
         </select>
         {error && (
-          <p className="text-sm text-red-600 mt-1">{error}</p>
+          <p className="text-xs font-medium text-red-600 mt-1">{error}</p>
         )}
       </div>
     );
@@ -204,7 +209,7 @@ Select.displayName = "Select";
 
 // ─── Badge ───────────────────────────────────────────────────────────
 
-type BadgeVariant = "green" | "yellow" | "red" | "blue" | "gray";
+type BadgeVariant = "green" | "yellow" | "red" | "blue" | "gray" | "info";
 
 interface BadgeProps {
   variant: BadgeVariant;
@@ -212,21 +217,23 @@ interface BadgeProps {
   className?: string;
 }
 
+// Exact specification palette matching Section 4
 const badgeVariantClasses: Record<BadgeVariant, string> = {
-  green: "bg-green-600 text-green-50",
-  yellow: "bg-yellow-500 text-yellow-950",
-  red: "bg-red-600 text-red-50",
-  blue: "bg-blue-600 text-blue-50",
-  gray: "bg-slate-200 text-slate-700",
+  green: "bg-[#DCFCE7] text-[#166534] border border-[#86EFAC]",
+  yellow: "bg-[#FEF3C7] text-[#92400E] border border-[#FCD34D]",
+  red: "bg-[#FEE2E2] text-[#991B1B] border border-[#FCA5A5]",
+  blue: "bg-blue-50 text-blue-700 border border-blue-200",
+  info: "bg-sky-50 text-[#0284C7] border border-sky-200",
+  gray: "bg-slate-100 text-slate-700 border border-slate-200",
 };
 
 export function Badge({ variant, children, className = "" }: BadgeProps) {
   return (
     <span
       className={`
-        inline-flex items-center
+        inline-flex items-center gap-1
         px-2.5 py-0.5
-        rounded-full
+        rounded-md
         text-xs font-semibold
         ${badgeVariantClasses[variant]}
         ${className}
@@ -244,26 +251,36 @@ interface CardProps {
   className?: string;
   title?: string;
   subtitle?: string;
+  actions?: React.ReactNode;
 }
 
-export function Card({ children, className = "", title, subtitle }: CardProps) {
+export function Card({
+  children,
+  className = "",
+  title,
+  subtitle,
+  actions,
+}: CardProps) {
   return (
     <div
       className={`
-        bg-white border border-slate-200
-        rounded-xl shadow-sm
+        bg-white border border-[#E2E8F0]
+        rounded-xl shadow-xs
         overflow-hidden
         ${className}
       `.trim()}
     >
-      {(title || subtitle) && (
-        <div className="px-6 py-4 border-b border-slate-200">
-          {title && (
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-          )}
-          {subtitle && (
-            <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
-          )}
+      {(title || subtitle || actions) && (
+        <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+          <div>
+            {title && (
+              <h3 className="text-base font-semibold text-[#0F172A]">{title}</h3>
+            )}
+            {subtitle && (
+              <p className="mt-0.5 text-xs text-[#64748B]">{subtitle}</p>
+            )}
+          </div>
+          {actions && <div>{actions}</div>}
         </div>
       )}
       <div className="px-6 py-4">{children}</div>
@@ -300,7 +317,7 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -309,7 +326,7 @@ export function Modal({
       <div
         className={`
           relative w-full ${modalSizeClasses[size]}
-          bg-white rounded-xl shadow-2xl
+          bg-white rounded-xl shadow-xl
           border border-slate-200
           transform transition-all
         `.trim()}
@@ -321,13 +338,13 @@ export function Modal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <h2
             id="modal-title"
-            className="text-lg font-semibold text-slate-900"
+            className="text-base font-bold text-slate-900"
           >
             {title}
           </h2>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 transition-colors rounded-lg p-1 hover:bg-slate-100"
+            className="text-slate-400 hover:text-slate-600 transition-colors rounded-lg p-1 hover:bg-slate-100 cursor-pointer"
             aria-label="Close modal"
           >
             <svg

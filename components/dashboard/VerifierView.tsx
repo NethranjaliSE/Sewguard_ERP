@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button, Card, Badge, Input, Modal } from "@/components/ui";
-import { useRole } from "@/app/context/RoleContext";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -14,12 +13,14 @@ interface VerificationItemData {
   recipeComponent: {
     id: string;
     componentName: string;
+    piecesPerGarment: number;
     unit: string;
   };
 }
 
 interface OrderData {
   id: string;
+  orderNo: string | null;
   targetQty: number;
   fabricRollId: string;
   actualFabricYards: number;
@@ -29,9 +30,12 @@ interface OrderData {
   recipe: {
     id: string;
     name: string;
+    recipeCode: string | null;
+    stdFabricYards: number;
+    wastageCap: number;
   };
   verificationItems: VerificationItemData[];
-  createdBy?: { name: string } | null;
+  createdBy?: { name: string; email?: string } | null;
 }
 
 type TrafficLight = "MATCH" | "EXCESS" | "SHORTAGE";
@@ -60,14 +64,12 @@ function statusBadgeVariant(
 // ─── VerifierView ────────────────────────────────────────────────────
 
 export default function VerifierView() {
-  const { role } = useRole();
-
   const [orders, setOrders] = useState<OrderData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  // Map of orderId -> { itemId -> actualQty (string for input) }
+  // Map of orderId -> { itemId -> actualQty string }
   const [actualQtys, setActualQtys] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -76,31 +78,70 @@ export default function VerifierView() {
   const [rejectModal, setRejectModal] = useState<{
     isOpen: boolean;
     orderId: string;
-  }>({ isOpen: false, orderId: "" });
+    orderNo: string;
+  }>({ isOpen: false, orderId: "", orderNo: "" });
   const [rejectionNote, setRejectionNote] = useState("");
+  const [rejectError, setRejectError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Selected order for expanded view
+  // Currently expanded order
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
   // ── Fetch pending orders ────────────────────────────────────────
   const fetchOrders = useCallback(async () => {
     try {
-      setLoading(true);
-      const res = await fetch("/api/orders?status=PENDING_VERIFICATION");
-      if (!res.ok) throw new Error("Failed to fetch");
+      const res = await fetch("/api/orders?status=PENDING_VERIFICATION", {
+        headers: { "x-app-role": "cutting_verifier" },
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || "Failed to load orders.");
+      }
       const data = await res.json();
       setOrders(data.orders);
-    } catch {
-      setError("Could not load orders.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not load orders.";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
+    let ignore = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/orders?status=PENDING_VERIFICATION", {
+          headers: { "x-app-role": "cutting_verifier" },
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.message || "Failed to load orders.");
+        }
+        const data = await res.json();
+        if (!ignore) {
+          setOrders(data.orders);
+          // Auto-expand first order if available
+          if (data.orders.length > 0 && !expandedOrderId) {
+            setExpandedOrderId(data.orders[0].id);
+          }
+        }
+      } catch (err: unknown) {
+        if (!ignore) {
+          const msg = err instanceof Error ? err.message : "Could not load orders.";
+          setError(msg);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    load();
+    return () => {
+      ignore = true;
+    };
+  }, [expandedOrderId]);
 
   // ── Handle qty input ────────────────────────────────────────────
   const handleQtyChange = useCallback(
@@ -121,28 +162,37 @@ export default function VerifierView() {
     (order: OrderData) => {
       return order.verificationItems.map((vi) => {
         const rawVal = actualQtys[order.id]?.[vi.id];
-        const actual = rawVal !== undefined ? parseInt(rawVal, 10) : null;
+        const actual =
+          rawVal !== undefined && rawVal.trim() !== ""
+            ? parseInt(rawVal, 10)
+            : vi.actualQty != null
+            ? vi.actualQty
+            : null;
 
         return {
           ...vi,
-          inputActual: rawVal ?? "",
+          inputActual: rawVal !== undefined ? rawVal : (vi.actualQty != null ? String(vi.actualQty) : ""),
           computedActual: actual,
           computedStatus:
-            actual !== null && !isNaN(actual)
+            actual !== null && !isNaN(actual) && actual >= 0
               ? calcStatus(actual, vi.expectedQty)
               : null,
+          shortageAmount:
+            actual !== null && actual < vi.expectedQty
+              ? vi.expectedQty - actual
+              : 0,
         };
       });
     },
     [actualQtys]
   );
 
-  // ── Check if approve is allowed (no shortages) ──────────────────
+  // ── Check if approve is allowed (no shortages and all counted) ──
   const canApprove = useCallback(
     (order: OrderData): boolean => {
       const items = computeItemStatuses(order);
 
-      // All items must have a valid actual qty entered
+      // All items must have valid entered integer counts >= 0
       const allFilled = items.every(
         (i) => i.computedActual !== null && !isNaN(i.computedActual) && i.computedActual >= 0
       );
@@ -155,11 +205,11 @@ export default function VerifierView() {
     [computeItemStatuses]
   );
 
-  // Helper: check if any item has a shortage
-  const hasAnyShortage = useCallback(
-    (order: OrderData): boolean => {
+  // ── Get list of shortage items ──────────────────────────────────
+  const getShortages = useCallback(
+    (order: OrderData) => {
       const items = computeItemStatuses(order);
-      return items.some((i) => i.computedStatus === "SHORTAGE");
+      return items.filter((i) => i.computedStatus === "SHORTAGE");
     },
     [computeItemStatuses]
   );
@@ -179,10 +229,12 @@ export default function VerifierView() {
       try {
         const res = await fetch(`/api/orders/${order.id}/verify`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-app-role": "cutting_verifier",
+          },
           body: JSON.stringify({
             action: "APPROVE",
-            role,
             items,
           }),
         });
@@ -190,12 +242,13 @@ export default function VerifierView() {
         const data = await res.json();
 
         if (!res.ok) {
-          setError(data.error || "Approval failed.");
+          setError(data.message || data.error || "Approval failed.");
           return;
         }
 
+        const orderLabel = order.orderNo || order.id.slice(0, 8);
         setSuccessMsg(
-          `✅ Order ${order.id.slice(0, 8)}… approved! Wastage: ${data.wastagePct ?? 0}%`
+          `✅ Batch ${orderLabel} successfully verified and approved! Wastage: ${data.wastagePct ?? 0}% (Transferred to Sewing Queue)`
         );
         fetchOrders();
       } catch {
@@ -204,16 +257,18 @@ export default function VerifierView() {
         setSubmitting(false);
       }
     },
-    [computeItemStatuses, role, fetchOrders]
+    [computeItemStatuses, fetchOrders]
   );
 
   // ── Reject handler ──────────────────────────────────────────────
   const handleReject = useCallback(async () => {
-    if (!rejectionNote.trim()) {
-      setError("Rejection note is mandatory.");
+    const trimmed = rejectionNote.trim();
+    if (!trimmed) {
+      setRejectError("Rejection reason is mandatory.");
       return;
     }
 
+    setRejectError("");
     setError("");
     setSuccessMsg("");
     setSubmitting(true);
@@ -221,31 +276,33 @@ export default function VerifierView() {
     try {
       const res = await fetch(`/api/orders/${rejectModal.orderId}/verify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-app-role": "cutting_verifier",
+        },
         body: JSON.stringify({
           action: "REJECT",
-          role,
-          rejectionNote: rejectionNote.trim(),
+          rejectionNote: trimmed,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Rejection failed.");
+        setRejectError(data.message || data.error || "Rejection failed.");
         return;
       }
 
-      setSuccessMsg(`Order ${rejectModal.orderId.slice(0, 8)}… rejected.`);
-      setRejectModal({ isOpen: false, orderId: "" });
+      setSuccessMsg(`Order ${rejectModal.orderNo} rejected and returned for re-cutting.`);
+      setRejectModal({ isOpen: false, orderId: "", orderNo: "" });
       setRejectionNote("");
       fetchOrders();
     } catch {
-      setError("Network error during rejection.");
+      setRejectError("Network error during rejection.");
     } finally {
       setSubmitting(false);
     }
-  }, [rejectionNote, rejectModal.orderId, role, fetchOrders]);
+  }, [rejectionNote, rejectModal.orderId, rejectModal.orderNo, fetchOrders]);
 
   // ── Memoize expanded order items ────────────────────────────────
   const expandedOrder = useMemo(
@@ -258,19 +315,38 @@ export default function VerifierView() {
     [expandedOrder, computeItemStatuses]
   );
 
+  const expandedShortages = useMemo(
+    () => (expandedOrder ? getShortages(expandedOrder) : []),
+    [expandedOrder, getShortages]
+  );
+
+  // Fabric Wastage Calculations for Expanded Order
+  const fabricStats = useMemo(() => {
+    if (!expandedOrder) return null;
+    const exp = expandedOrder.expectedFabricYards;
+    const act = expandedOrder.actualFabricYards;
+    const wastage = exp > 0 ? parseFloat((((act - exp) / exp) * 100).toFixed(2)) : 0;
+    const cap = expandedOrder.recipe.wastageCap || 5.0;
+    const isWithinCap = wastage <= cap;
+    return {
+      expected: exp,
+      actual: act,
+      wastage,
+      cap,
+      isWithinCap,
+    };
+  }, [expandedOrder]);
+
   // ── Render ──────────────────────────────────────────────────────
 
   if (loading) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-slate-900">
-          Gatekeeper Verification
+        <h2 className="text-xl font-bold text-[#0F172A]">
+          Gatekeeper Verification Terminal
         </h2>
         {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="animate-pulse h-24 bg-slate-100 rounded-xl"
-          />
+          <div key={i} className="animate-pulse h-28 bg-slate-100 rounded-xl" />
         ))}
       </div>
     );
@@ -280,48 +356,45 @@ export default function VerifierView() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-slate-900">
-          Gatekeeper Verification
+        <h2 className="text-xl font-bold text-[#0F172A]">
+          Gatekeeper Verification Terminal
         </h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Verify component counts for pending cutting orders. RED items block
-          approval.
+        <p className="mt-1 text-xs text-[#64748B]">
+          Inspect incoming physical component counts against recipe specifications. Batches with any shortage are hard-stopped.
         </p>
       </div>
 
-      {/* Feedback */}
+      {/* Feedback Notifications */}
       {successMsg && (
-        <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-sm text-green-800">
-          {successMsg}
+        <div className="rounded-xl bg-[#DCFCE7] border border-[#86EFAC] p-4 text-sm text-[#166534] shadow-xs flex items-center gap-3">
+          <svg className="w-5 h-5 text-emerald-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+          <span className="font-semibold">{successMsg}</span>
         </div>
       )}
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-800">
-          {error}
+        <div className="rounded-xl bg-[#FEE2E2] border border-[#FCA5A5] p-4 text-sm text-[#991B1B] shadow-xs flex items-center gap-2">
+          <svg className="w-5 h-5 text-red-600 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          <span>{error}</span>
         </div>
       )}
 
       {orders.length === 0 ? (
         <Card>
           <div className="text-center py-12">
-            <svg
-              className="mx-auto h-12 w-12 text-slate-300"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <p className="mt-4 text-slate-500 font-medium">
+            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-slate-800 font-semibold">
               No orders pending verification
             </p>
-            <p className="mt-1 text-sm text-slate-400">
-              All cutting orders have been processed.
+            <p className="mt-1 text-xs text-slate-500">
+              All cutting batches have been processed through the verification gate.
             </p>
           </div>
         </Card>
@@ -329,173 +402,255 @@ export default function VerifierView() {
         <div className="space-y-4">
           {orders.map((order) => {
             const isExpanded = expandedOrderId === order.id;
+            const orderNo = order.orderNo || `ORD-${order.id.slice(0, 8)}`;
 
             return (
-              <Card key={order.id}>
-                {/* Order header row */}
+              <Card key={order.id} className={isExpanded ? "ring-2 ring-blue-500/20" : ""}>
+                {/* Order Summary Header Row */}
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-slate-900">
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-mono text-sm font-bold text-[#0F172A] bg-slate-100 px-2.5 py-1 rounded border border-slate-200">
+                        {orderNo}
+                      </span>
+                      <h3 className="font-bold text-base text-[#0F172A]">
                         {order.recipe.name}
                       </h3>
-                      <Badge variant="blue">Pending</Badge>
+                      <Badge variant="blue">PENDING VERIFICATION</Badge>
                     </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#64748B] pt-1">
+                      <span>Target: <strong className="text-slate-900">{order.targetQty} garments</strong></span>
+                      <span>Fabric Roll: <strong className="font-mono text-slate-900">{order.fabricRollId}</strong></span>
                       <span>
-                        Order:{" "}
-                        <span className="font-mono text-slate-700">
-                          {order.id.slice(0, 8)}…
-                        </span>
+                        Fabric: <strong className="text-slate-900">{order.actualFabricYards} yds</strong> (Expected: {order.expectedFabricYards} yds)
                       </span>
-                      <span>Target Qty: <strong className="text-slate-700">{order.targetQty}</strong></span>
-                      <span>Roll: <strong className="text-slate-700">{order.fabricRollId}</strong></span>
-                      <span>
-                        Fabric:{" "}
-                        <strong className="text-slate-700">
-                          {order.actualFabricYards}yd
-                        </strong>{" "}
-                        / {order.expectedFabricYards}yd expected
-                      </span>
+                      {order.createdBy && (
+                        <span>Supervisor: <strong className="text-slate-800">{order.createdBy.name}</strong></span>
+                      )}
+                      <span>Created: <span className="font-mono">{new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></span>
                     </div>
                   </div>
 
                   <Button
-                    variant="secondary"
+                    variant={isExpanded ? "secondary" : "primary"}
                     size="sm"
                     onClick={() =>
                       setExpandedOrderId(isExpanded ? null : order.id)
                     }
                   >
-                    {isExpanded ? "Collapse" : "Verify →"}
+                    {isExpanded ? "Close Terminal" : "Open Verification Terminal →"}
                   </Button>
                 </div>
 
-                {/* Expanded verification table */}
+                {/* Expanded Verification Terminal */}
                 {isExpanded && expandedOrder && (
-                  <div className="mt-6 border-t border-slate-200 pt-6">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b-2 border-slate-200">
-                            <th className="text-left py-3 px-2 font-semibold text-slate-700">
-                              Component
-                            </th>
-                            <th className="text-center py-3 px-2 font-semibold text-slate-700">
-                              Expected Qty
-                            </th>
-                            <th className="text-center py-3 px-2 font-semibold text-slate-700 w-36">
-                              Actual Qty
-                            </th>
-                            <th className="text-center py-3 px-2 font-semibold text-slate-700">
-                              Status
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {expandedItems.map((item) => (
-                            <tr
-                              key={item.id}
-                              className={`border-b border-slate-100 last:border-0 ${
-                                item.computedStatus === "SHORTAGE"
-                                  ? "bg-red-50"
-                                  : ""
-                              }`}
-                            >
-                              <td className="py-3 px-2 text-slate-900 font-medium">
-                                {item.recipeComponent.componentName}
-                              </td>
-                              <td className="py-3 px-2 text-center font-mono text-slate-900">
-                                {item.expectedQty}
-                              </td>
-                              <td className="py-3 px-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="1"
-                                  placeholder="0"
-                                  value={item.inputActual}
-                                  onChange={(e) =>
-                                    handleQtyChange(
-                                      order.id,
-                                      item.id,
-                                      e.target.value
-                                    )
-                                  }
-                                  className="text-center !py-1.5"
-                                />
-                              </td>
-                              <td className="py-3 px-2 text-center">
-                                {item.computedStatus ? (
-                                  <Badge
-                                    variant={statusBadgeVariant(
-                                      item.computedStatus
-                                    )}
-                                  >
-                                    {item.computedStatus}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-slate-300">—</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Shortage warning */}
-                    {hasAnyShortage(order) && (
-                      <div className="mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800 flex items-start gap-2">
-                        <svg
-                          className="h-5 w-5 text-red-600 shrink-0 mt-0.5"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                        <span>
-                          <strong>Hard Stop:</strong> One or more components have
-                          a SHORTAGE (RED). Approval is blocked until all
-                          quantities meet or exceed the expected count.
-                        </span>
+                  <div className="mt-6 border-t border-[#E2E8F0] pt-6 space-y-6">
+                    {/* Fabric Wastage Telemetry Card */}
+                    {fabricStats && (
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                        <div>
+                          <span className="block text-slate-500 font-medium">Expected Fabric</span>
+                          <span className="font-mono font-bold text-slate-900 text-sm">{fabricStats.expected} yds</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 font-medium">Actual Fabric</span>
+                          <span className="font-mono font-bold text-slate-900 text-sm">{fabricStats.actual} yds</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 font-medium">Fabric Wastage</span>
+                          <span className={`font-mono font-bold text-sm ${fabricStats.wastage > fabricStats.cap ? "text-red-700" : "text-slate-900"}`}>
+                            {fabricStats.wastage > 0 ? "+" : ""}{fabricStats.wastage}%
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 font-medium">Wastage Cap</span>
+                          <span className="font-mono font-bold text-amber-800 text-sm">{fabricStats.cap}%</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 font-medium">Wastage Status</span>
+                          <Badge variant={fabricStats.isWithinCap ? "green" : "red"}>
+                            {fabricStats.isWithinCap ? "Within Cap" : "Exceeds Cap"}
+                          </Badge>
+                        </div>
                       </div>
                     )}
 
-                    {/* Action buttons */}
-                    <div className="mt-6 flex gap-3">
-                      <Button
-                        variant="primary"
-                        size="lg"
-                        disabled={!canApprove(order) || submitting}
-                        loading={submitting}
-                        onClick={() => handleApprove(order)}
-                        title={
-                          !canApprove(order)
-                            ? "Cannot approve: fill all quantities and resolve shortages"
-                            : "Approve this batch"
-                        }
-                      >
-                        ✓ Approve Batch
-                      </Button>
+                    {/* Component Count Table */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                          Component Verification Counts
+                        </h4>
+                        <span className="text-[11px] text-slate-500">
+                          Enter physical counts verified at cutting table
+                        </span>
+                      </div>
 
-                      <Button
-                        variant="danger"
-                        size="lg"
-                        disabled={submitting}
-                        onClick={() =>
-                          setRejectModal({
-                            isOpen: true,
-                            orderId: order.id,
-                          })
-                        }
-                      >
-                        ✗ Reject
-                      </Button>
+                      <div className="overflow-x-auto rounded-lg border border-slate-200">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-100 text-slate-700">
+                              <th className="text-left py-2.5 px-3 font-semibold">Component</th>
+                              <th className="text-center py-2.5 px-3 font-semibold">Pcs/Garment</th>
+                              <th className="text-center py-2.5 px-3 font-semibold">Expected Count</th>
+                              <th className="text-center py-2.5 px-3 font-semibold w-40">Actual Physical Count</th>
+                              <th className="text-center py-2.5 px-3 font-semibold">Gate Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {expandedItems.map((item) => (
+                              <tr
+                                key={item.id}
+                                className={`border-b border-slate-100 last:border-0 transition-colors ${
+                                  item.computedStatus === "SHORTAGE"
+                                    ? "bg-red-50/70"
+                                    : item.computedStatus === "EXCESS"
+                                    ? "bg-amber-50/40"
+                                    : ""
+                                }`}
+                              >
+                                <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                  {item.recipeComponent.componentName}
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono text-slate-600">
+                                  {item.recipeComponent.piecesPerGarment || 1}
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-900">
+                                  {item.expectedQty} {item.recipeComponent.unit}
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <div className="max-w-[140px] mx-auto">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      placeholder="Count"
+                                      value={item.inputActual}
+                                      onChange={(e) =>
+                                        handleQtyChange(
+                                          order.id,
+                                          item.id,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="text-center font-mono font-bold !py-1 text-sm text-[#0F172A]"
+                                    />
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  {item.computedStatus ? (
+                                    <Badge
+                                      variant={statusBadgeVariant(
+                                        item.computedStatus
+                                      )}
+                                    >
+                                      {item.computedStatus === "MATCH" && "🟢 "}
+                                      {item.computedStatus === "EXCESS" && "🟡 "}
+                                      {item.computedStatus === "SHORTAGE" && "🔴 "}
+                                      {item.computedStatus}
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-slate-400 font-mono italic">Awaiting count</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* ── HARD STOP CALLOUT (Requirement 19) ───────── */}
+                    {expandedShortages.length > 0 && (
+                      <div className="rounded-xl bg-[#FEE2E2] border-2 border-[#FCA5A5] p-4 text-[#991B1B] shadow-xs space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🔴</span>
+                          <h5 className="font-extrabold text-sm uppercase tracking-wide">
+                            SHORTAGE DETECTED — APPROVAL BLOCKED
+                          </h5>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          {expandedShortages.map((s) => (
+                            <div
+                              key={s.id}
+                              className="p-2.5 bg-white/80 rounded-lg border border-red-200"
+                            >
+                              <strong className="block text-slate-900 font-bold">
+                                {s.recipeComponent.componentName}
+                              </strong>
+                              <div className="mt-1 flex justify-between text-slate-700">
+                                <span>Expected: <strong className="font-mono">{s.expectedQty}</strong></span>
+                                <span>Actual: <strong className="font-mono">{s.computedActual}</strong></span>
+                                <span className="text-red-700 font-bold">Missing: {s.shortageAmount} pcs</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <p className="text-xs font-medium text-red-800">
+                          Gatekeeper policy prohibits incomplete batches from advancing to the sewing queue. Approval is blocked on the server until shortages are resolved or the batch is rejected for re-cutting.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Action Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-200">
+                      <div className="text-xs text-slate-500">
+                        {canApprove(order) ? (
+                          <span className="text-emerald-700 font-semibold flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            All counts verified. Ready for batch approval.
+                          </span>
+                        ) : expandedShortages.length > 0 ? (
+                          <span className="text-red-700 font-semibold flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-red-500" />
+                            Approval blocked due to shortage items.
+                          </span>
+                        ) : (
+                          <span className="text-slate-500 italic">
+                            Enter counts for all components to enable approval.
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <Button
+                          variant="danger"
+                          size="md"
+                          disabled={submitting}
+                          onClick={() => {
+                            setRejectModal({
+                              isOpen: true,
+                              orderId: order.id,
+                              orderNo,
+                            });
+                            setRejectionNote(
+                              expandedShortages.length > 0
+                                ? `Shortage detected in: ${expandedShortages.map(s => `${s.recipeComponent.componentName} (missing ${s.shortageAmount})`).join(", ")}`
+                                : ""
+                            );
+                          }}
+                        >
+                          Reject Batch…
+                        </Button>
+
+                        <Button
+                          variant="success"
+                          size="md"
+                          disabled={!canApprove(order) || submitting}
+                          loading={submitting}
+                          onClick={() => handleApprove(order)}
+                          title={
+                            !canApprove(order)
+                              ? "Approval is blocked: resolve shortages or fill all counts"
+                              : "Approve and send to Sewing Queue"
+                          }
+                        >
+                          ✓ Approve Batch
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -505,67 +660,74 @@ export default function VerifierView() {
         </div>
       )}
 
-      {/* Rejection Modal */}
+      {/* ── Rejection Reason Modal ──────────────────────────────────── */}
       <Modal
         isOpen={rejectModal.isOpen}
         onClose={() => {
-          setRejectModal({ isOpen: false, orderId: "" });
+          setRejectModal({ isOpen: false, orderId: "", orderNo: "" });
           setRejectionNote("");
+          setRejectError("");
         }}
-        title="Reject Cutting Order"
+        title={`Reject Batch: ${rejectModal.orderNo}`}
       >
         <div className="space-y-4">
-          <p className="text-sm text-slate-600">
-            Please provide a reason for rejecting order{" "}
-            <span className="font-mono font-semibold text-slate-900">
-              {rejectModal.orderId.slice(0, 8)}…
-            </span>
-            . This note will be part of the permanent audit trail.
+          <p className="text-xs text-slate-600">
+            A mandatory rejection reason must be recorded in the audit trail before returning this order to the Cutting Supervisor for re-cutting.
           </p>
+
+          {rejectError && (
+            <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs font-medium text-red-700">
+              {rejectError}
+            </div>
+          )}
 
           <div className="space-y-1">
             <label
               htmlFor="rejection-note"
-              className="block text-sm font-medium text-slate-700"
+              className="block text-xs font-bold text-slate-800"
             >
-              Rejection Note <span className="text-red-500">*</span>
+              Rejection Reason & Defect Notes *
             </label>
             <textarea
               id="rejection-note"
-              rows={4}
+              rows={3}
               className="
                 block w-full rounded-lg
                 border border-slate-300
                 px-3 py-2
-                text-slate-950 placeholder-slate-400
+                text-xs text-slate-900 placeholder:text-slate-400
                 bg-white
                 shadow-sm
                 transition-colors duration-150
                 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600
               "
-              placeholder="e.g. Fabric pattern mismatch on front panels…"
+              placeholder="e.g. 2 sleeve pieces missing due to cutting defect on FAB-ROLL-882"
               value={rejectionNote}
               onChange={(e) => setRejectionNote(e.target.value)}
+              required
             />
           </div>
 
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="secondary"
+              size="sm"
               onClick={() => {
-                setRejectModal({ isOpen: false, orderId: "" });
+                setRejectModal({ isOpen: false, orderId: "", orderNo: "" });
                 setRejectionNote("");
+                setRejectError("");
               }}
             >
               Cancel
             </Button>
             <Button
               variant="danger"
+              size="sm"
               loading={submitting}
               disabled={!rejectionNote.trim() || submitting}
               onClick={handleReject}
             >
-              Confirm Rejection
+              Confirm Rejection & Return
             </Button>
           </div>
         </div>

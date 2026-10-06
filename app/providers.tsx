@@ -38,13 +38,13 @@ const ROLE_ICONS: Record<AppRole, React.ReactNode> = {
 };
 
 const ROLE_COLORS: Record<AppRole, string> = {
-  cutting_supervisor: "bg-blue-600 text-white hover:bg-blue-700",
-  cutting_verifier: "bg-emerald-600 text-white hover:bg-emerald-700",
-  sewing_supervisor: "bg-violet-600 text-white hover:bg-violet-700",
+  cutting_supervisor: "bg-[#2563EB] text-white shadow-xs",
+  cutting_verifier: "bg-emerald-600 text-white shadow-xs",
+  sewing_supervisor: "bg-indigo-600 text-white shadow-xs",
 };
 
-const ROLE_INACTIVE: string =
-  "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:border-slate-300";
+const ROLE_INACTIVE =
+  "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300";
 
 // ─── Navbar ──────────────────────────────────────────────────────────
 
@@ -52,71 +52,76 @@ function Navbar() {
   const { role, setRole, roleLabel } = useRole();
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
+    <header className="sticky top-0 z-40 bg-white border-b border-[#E2E8F0] shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Branding */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-sm">
-              <svg
-                className="h-5 w-5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
-                  clipRule="evenodd"
-                />
-              </svg>
+            <div className="flex items-center justify-center h-10 w-10 rounded-lg bg-[#0F172A] text-white shadow-sm font-black text-lg tracking-wider">
+              AF
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 leading-tight">
-                ApparelFlow ERP
-              </h1>
-              <p className="text-xs text-slate-500 -mt-0.5">
-                Gatekeeper Verification
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-bold text-[#0F172A] leading-tight">
+                  ApparelFlow ERP
+                </h1>
+                <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wider">
+                  v1.0
+                </span>
+              </div>
+              <p className="text-xs text-[#64748B] font-medium">
+                Gatekeeper Verification System
               </p>
             </div>
           </div>
 
           {/* Role Switcher */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 mr-1 hidden sm:inline">
-              Active Role:
-            </span>
-            {(Object.keys(ROLE_LABELS) as AppRole[]).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRole(r)}
-                className={`
-                  inline-flex items-center gap-1.5
-                  px-3 py-1.5
-                  rounded-lg
-                  text-sm font-medium
-                  transition-all duration-150
-                  cursor-pointer
-                  ${role === r ? ROLE_COLORS[r] : ROLE_INACTIVE}
-                `.trim()}
-                aria-pressed={role === r}
-                title={`Switch to ${ROLE_LABELS[r]}`}
-              >
-                {ROLE_ICONS[r]}
-                <span className="hidden md:inline">{ROLE_LABELS[r]}</span>
-              </button>
-            ))}
+            <div className="hidden lg:flex items-center gap-1.5 mr-2 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs text-slate-500">Active Persona:</span>
+              <span className="text-xs font-semibold text-slate-800">
+                {roleLabel}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg border border-slate-200">
+              {(Object.keys(ROLE_LABELS) as AppRole[]).map((r) => {
+                const isActive = role === r;
+                return (
+                  <button
+                    key={r}
+                    onClick={() => setRole(r)}
+                    className={`
+                      inline-flex items-center gap-1.5
+                      px-2.5 py-1.5
+                      rounded-md
+                      text-xs font-semibold
+                      transition-all duration-150
+                      cursor-pointer
+                      ${isActive ? ROLE_COLORS[r] : ROLE_INACTIVE}
+                    `.trim()}
+                    aria-pressed={isActive}
+                    title={`Switch to ${ROLE_LABELS[r]}`}
+                  >
+                    {ROLE_ICONS[r]}
+                    <span className="hidden sm:inline">{ROLE_LABELS[r]}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Current role indicator bar */}
+      {/* Role Color Accent Bar */}
       <div
         className={`h-0.5 transition-all duration-300 ${
           role === "cutting_supervisor"
-            ? "bg-blue-600"
+            ? "bg-[#2563EB]"
             : role === "cutting_verifier"
             ? "bg-emerald-600"
-            : "bg-violet-600"
+            : "bg-indigo-600"
         }`}
       />
     </header>
