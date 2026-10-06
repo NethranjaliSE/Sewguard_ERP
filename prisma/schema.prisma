@@ -6,9 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") //
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ─── Enums ───────────────────────────────────────────────────────────
@@ -20,9 +20,12 @@ enum Role {
 }
 
 enum OrderStatus {
+  CUTTING_IN_PROGRESS
   PENDING_VERIFICATION
-  VERIFIED
   REJECTED
+  VERIFIED
+  SEWING_IN_PROGRESS
+  COMPLETED
 }
 
 enum ComponentStatus {
@@ -34,10 +37,12 @@ enum ComponentStatus {
 // ─── Models ──────────────────────────────────────────────────────────
 
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  role      Role
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid())
+  email        String?  @unique
+  passwordHash String?  @map("password_hash")
+  name         String
+  role         Role
+  createdAt    DateTime @default(now()) @map("created_at")
 
   cuttingOrders    CuttingOrder[]
   verificationLogs VerificationLog[]
@@ -46,10 +51,14 @@ model User {
 }
 
 model Recipe {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  recipeCode     String?  @unique @map("recipe_code")
+  name           String   @unique
+  category       String?
+  description    String?
+  stdFabricYards Float    @default(1.5) @map("std_fabric_yards")
+  wastageCap     Float    @default(5.0) @map("wastage_cap")
+  createdAt      DateTime @default(now()) @map("created_at")
 
   components    RecipeComponent[]
   cuttingOrders CuttingOrder[]
@@ -58,11 +67,13 @@ model Recipe {
 }
 
 model RecipeComponent {
-  id              String @id @default(uuid())
-  recipeId        String @map("recipe_id")
-  componentName   String @map("component_name")
-  expectedQty     Int    @map("expected_qty")
-  unit            String @default("pcs")
+  id               String  @id @default(uuid())
+  recipeId         String  @map("recipe_id")
+  componentName    String  @map("component_name")
+  piecesPerGarment Int     @default(1) @map("pieces_per_garment")
+  expectedQty      Int     @default(1) @map("expected_qty") // backwards compatibility
+  unit             String  @default("pcs")
+  imageUrl         String? @map("image_url")
 
   recipe            Recipe             @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   verificationItems VerificationItem[]
@@ -72,16 +83,17 @@ model RecipeComponent {
 }
 
 model CuttingOrder {
-  id               String      @id @default(uuid())
-  recipeId         String      @map("recipe_id")
-  targetQty        Int         @map("target_qty")
-  fabricRollId     String      @map("fabric_roll_id")
-  actualFabricYards Float      @map("actual_fabric_yards")
-  expectedFabricYards Float    @map("expected_fabric_yards")
-  status           OrderStatus @default(PENDING_VERIFICATION)
-  createdById      String?     @map("created_by_id")
-  createdAt        DateTime    @default(now()) @map("created_at")
-  updatedAt        DateTime    @updatedAt @map("updated_at")
+  id                  String      @id @default(uuid())
+  orderNo             String?     @unique @map("order_no")
+  recipeId            String      @map("recipe_id")
+  targetQty           Int         @map("target_qty")
+  fabricRollId        String      @map("fabric_roll_id")
+  actualFabricYards   Float       @map("actual_fabric_yards")
+  expectedFabricYards Float       @map("expected_fabric_yards")
+  status              OrderStatus @default(PENDING_VERIFICATION)
+  createdById         String?     @map("created_by_id")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
 
   recipe            Recipe             @relation(fields: [recipeId], references: [id])
   createdBy         User?              @relation(fields: [createdById], references: [id])
@@ -92,11 +104,11 @@ model CuttingOrder {
 }
 
 model VerificationItem {
-  id                String          @id @default(uuid())
-  cuttingOrderId    String          @map("cutting_order_id")
-  recipeComponentId String          @map("recipe_component_id")
-  expectedQty       Int             @map("expected_qty")
-  actualQty         Int?            @map("actual_qty")
+  id                String           @id @default(uuid())
+  cuttingOrderId    String           @map("cutting_order_id")
+  recipeComponentId String           @map("recipe_component_id")
+  expectedQty       Int              @map("expected_qty")
+  actualQty         Int?             @map("actual_qty")
   status            ComponentStatus?
 
   cuttingOrder    CuttingOrder    @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
@@ -107,16 +119,17 @@ model VerificationItem {
 }
 
 model VerificationLog {
-  id              String      @id @default(uuid())
-  cuttingOrderId  String      @unique @map("cutting_order_id")
-  verifiedById    String?     @map("verified_by_id")
-  action          String      // "APPROVED" or "REJECTED"
-  rejectionNote   String?     @map("rejection_note")
-  wastagePct      Float?      @map("wastage_pct")
-  snapshotData    Json?       @map("snapshot_data") // immutable snapshot of component statuses
-  createdAt       DateTime    @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  cuttingOrderId String   @unique @map("cutting_order_id")
+  verifiedById   String?  @map("verified_by_id")
+  decision       String?  // "APPROVED" or "REJECTED"
+  action         String   // "APPROVED" or "REJECTED"
+  rejectionNote  String?  @map("rejection_note")
+  wastagePct     Float?   @map("wastage_pct")
+  snapshotData   Json?    @map("snapshot_data") // immutable snapshot of component statuses
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  cuttingOrder CuttingOrder @relation(fields: [cuttingOrderId], references: [id])
+  cuttingOrder CuttingOrder @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
   verifiedBy   User?        @relation(fields: [verifiedById], references: [id])
 
   @@map("verification_logs")
