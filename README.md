@@ -18,22 +18,34 @@ $$\text{CUTTING ORDER} \longrightarrow \text{PENDING VERIFICATION} \longrightarr
 
 ---
 
-## 2. Three RBAC Personas
+## 2. Authentication & Demo Personas
 
-The system provides three distinct manufacturing roles with strict server-side authorization:
+The system features an enterprise-grade authentication and session system with strict server-side Role-Based Access Control (RBAC).
 
-| Role Identifier | Role Label | Permitted Operations | Restricted Operations |
-| :--- | :--- | :--- | :--- |
-| `cutting_supervisor` | **Cutting Supervisor** | Create cutting orders, select recipes, enter roll IDs & fabric yardage, monitor cutting workflow | Cannot verify/approve/reject batches, cannot access Sewing Queue |
-| `cutting_verifier` | **Cutting Verifier** | Inspect pending batches in verification terminal, enter physical counts, observe traffic lights, approve valid batches, reject with mandatory reason | Cannot create orders, cannot edit recipes, cannot access Sewing Queue |
-| `sewing_supervisor` | **Sewing Supervisor** | View verified batches in Sewing Queue, inspect component breakdown & wastage audit, start sewing assembly | Cannot access pending/rejected batches, cannot create orders, cannot verify batches |
+### Evaluator Demo Credentials
 
-### Server-Side RBAC Enforcement
-The top navbar features a demo persona switcher for evaluation convenience. However, **the frontend switcher is NOT the security boundary**:
-- All API routes verify the active persona via `lib/auth.ts` from HTTP cookies (`app_role`) and request headers (`x-app-role`).
-- Role information inside request bodies is strictly ignored to prevent client spoofing.
-- Unauthorized roles receive an immediate **HTTP 403 Forbidden**.
-- Sewing Supervisor order queries enforce `WHERE status = VERIFIED` at the database query level; unverified orders are never leaked to the client.
+The database is seeded with exactly three demo accounts with secure bcrypt password hashes:
+
+| Role | Email | Password | Allowed Operations | Restricted Operations |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cutting Supervisor** (`cutting_supervisor`) | `supervisor@apparelfow.com` | `Supervisor@123` | Create cutting orders, select BOM recipes, track cutting batches | Cannot verify/approve/reject batches, cannot access Sewing Queue, cannot start sewing |
+| **Cutting Verifier** (`cutting_verifier`) | `verifier@apparelfow.com` | `Verifier@123` | Physical count entry, Gatekeeper reconciliation terminal, approve valid batches, reject invalid batches | Cannot create orders, cannot edit recipes, cannot access Sewing Queue, cannot start sewing |
+| **Sewing Supervisor** (`sewing_supervisor`) | `sewing@apparelfow.com` | `Sewing@123` | View verified sewing queue, inspect audit logs, start sewing assembly | Cannot access pending/rejected batches, cannot create orders, cannot verify batches |
+
+> **Note:** The login endpoint also supports the alternate domain spelling `apparelflow.com` automatically.
+
+### Architecture & Security Boundary
+- **Backend as Security Boundary**: Active sessions are authenticated via an **HTTP-only secure cookie** (`app_session`). The frontend NEVER changes the authenticated role locally.
+- **Single Source of Truth**: The session cookie stores a cryptographically signed user ID (HMAC-SHA256). For every protected request, the server reads the user ID and queries the PostgreSQL database directly (`users.role`) to resolve the active role.
+- **Header Role Tabs Behavior**: The header highlights the current authenticated role (solid blue `#2563EB` badge). Clicking any inactive role tab does **NOT** switch roles. Instead, it triggers a `RoleSwitchModal` dialog.
+- **Role Switch Flow (Evaluator-Friendly)**:
+  1. Operator clicks a non-active role tab (e.g. Cutting Verifier).
+  2. A confirmation modal appears showing current account and requested role.
+  3. Clicking **Cancel** closes the modal and keeps the current role.
+  4. Clicking **Logout & Switch** invalidates the current session (`POST /api/auth/logout`), presents the login screen, and preselects the requested demo role credentials.
+  5. The user explicitly signs in to establish a new authenticated backend session.
+- **Client Role Tampering Immunity**: Any role submitted in frontend request bodies (e.g. `{ "role": "cutting_verifier" }`) is strictly ignored. If an authenticated Cutting Supervisor submits a verification approval, the server enforces their database role and immediately rejects the call with **HTTP 403 Forbidden**.
+
 
 ---
 
