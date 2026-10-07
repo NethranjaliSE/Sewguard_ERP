@@ -1,10 +1,5 @@
 # AI Optimization & Engineering Judgment Report
 
-**Project:** ApparelFlow ERP — Cutting Operations & Gatekeeper Verification Terminal  
-**Company:** WEBTEZZA (PVT) LTD  
-**Assessment:** Software Engineering Intern — Full-Stack / React / Next.js  
-**Engineer:** Software Engineering Intern Candidate  
-**Date:** October 2026  
 
 ---
 
