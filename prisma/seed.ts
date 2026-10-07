@@ -1,4 +1,5 @@
 import { PrismaClient, Role, OrderStatus, ComponentStatus } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 // Automatically load .env file if running standalone via tsx/node
 try {
@@ -12,53 +13,66 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("🌱 Seeding ApparelFlow ERP database...");
 
-  // ─── Users ───────────────────────────────────────────────────────
+  // ─── Users (with bcrypt hashed passwords) ─────────────────────────
+  const supervisorHash = await bcrypt.hash("Supervisor@123", 10);
+  const verifierHash = await bcrypt.hash("Verifier@123", 10);
+  const sewingHash = await bcrypt.hash("Sewing@123", 10);
+
   const supervisor = await prisma.user.upsert({
     where: { id: "usr-supervisor-001" },
     update: {
-      email: "supervisor@apparelflow.com",
-      name: "Ali Khan (Cutting Supervisor)",
+      email: "supervisor@apparelfow.com",
+      name: "Cutting Supervisor",
       role: Role.cutting_supervisor,
+      passwordHash: supervisorHash,
     },
     create: {
       id: "usr-supervisor-001",
-      email: "supervisor@apparelflow.com",
-      name: "Ali Khan (Cutting Supervisor)",
+      email: "supervisor@apparelfow.com",
+      name: "Cutting Supervisor",
       role: Role.cutting_supervisor,
+      passwordHash: supervisorHash,
     },
   });
 
   const verifier = await prisma.user.upsert({
     where: { id: "usr-verifier-001" },
     update: {
-      email: "verifier@apparelflow.com",
-      name: "Sara Ahmed (Cutting Verifier)",
+      email: "verifier@apparelfow.com",
+      name: "Cutting Verifier",
       role: Role.cutting_verifier,
+      passwordHash: verifierHash,
     },
     create: {
       id: "usr-verifier-001",
-      email: "verifier@apparelflow.com",
-      name: "Sara Ahmed (Cutting Verifier)",
+      email: "verifier@apparelfow.com",
+      name: "Cutting Verifier",
       role: Role.cutting_verifier,
+      passwordHash: verifierHash,
     },
   });
 
   const sewingSupervisor = await prisma.user.upsert({
     where: { id: "usr-sewing-001" },
     update: {
-      email: "sewing@apparelflow.com",
-      name: "Bilal Hussain (Sewing Supervisor)",
+      email: "sewing@apparelfow.com",
+      name: "Sewing Supervisor",
       role: Role.sewing_supervisor,
+      passwordHash: sewingHash,
     },
     create: {
       id: "usr-sewing-001",
-      email: "sewing@apparelflow.com",
-      name: "Bilal Hussain (Sewing Supervisor)",
+      email: "sewing@apparelfow.com",
+      name: "Sewing Supervisor",
       role: Role.sewing_supervisor,
+      passwordHash: sewingHash,
     },
   });
 
-  console.log("✅ Users configured:", supervisor.email, verifier.email, sewingSupervisor.email);
+  console.log("✅ Demo users configured with secure bcrypt hashes:");
+  console.log("   -", supervisor.email, "=> cutting_supervisor");
+  console.log("   -", verifier.email, "=> cutting_verifier");
+  console.log("   -", sewingSupervisor.email, "=> sewing_supervisor");
 
   // ─── Recipe A: Casual Blouse ─────────────────────────────────────
   const blouse = await prisma.recipe.upsert({
@@ -257,6 +271,80 @@ async function main() {
       },
     });
     console.log("✅ Seeded Pending Demo Order: ORD-DEMO-002");
+  }
+
+  // Order 3: Pending Verification Order (Casual Blouse batch)
+  const order3Exists = await prisma.cuttingOrder.findFirst({
+    where: { orderNo: "ORD-DEMO-003" },
+  });
+
+  if (!order3Exists) {
+    const blouseComps = await prisma.recipeComponent.findMany({
+      where: { recipeId: blouse.id },
+    });
+
+    const targetQty3 = 60;
+    const expectedFabric3 = Number((targetQty3 * blouse.stdFabricYards).toFixed(2));
+    const actualFabric3 = 110.5;
+
+    await prisma.cuttingOrder.create({
+      data: {
+        orderNo: "ORD-DEMO-003",
+        recipeId: blouse.id,
+        targetQty: targetQty3,
+        fabricRollId: "FAB-ROLL-303",
+        actualFabricYards: actualFabric3,
+        expectedFabricYards: expectedFabric3,
+        status: OrderStatus.PENDING_VERIFICATION,
+        createdById: supervisor.id,
+        verificationItems: {
+          create: blouseComps.map((comp) => ({
+            recipeComponentId: comp.id,
+            expectedQty: comp.piecesPerGarment * targetQty3,
+            actualQty: null,
+            status: null,
+          })),
+        },
+      },
+    });
+    console.log("✅ Seeded Pending Demo Order: ORD-DEMO-003");
+  }
+
+  // Order 4: Pending Verification Order (Crop Top batch)
+  const order4Exists = await prisma.cuttingOrder.findFirst({
+    where: { orderNo: "ORD-DEMO-004" },
+  });
+
+  if (!order4Exists) {
+    const cropComps = await prisma.recipeComponent.findMany({
+      where: { recipeId: cropTop.id },
+    });
+
+    const targetQty4 = 80;
+    const expectedFabric4 = Number((targetQty4 * cropTop.stdFabricYards).toFixed(2));
+    const actualFabric4 = 91.0;
+
+    await prisma.cuttingOrder.create({
+      data: {
+        orderNo: "ORD-DEMO-004",
+        recipeId: cropTop.id,
+        targetQty: targetQty4,
+        fabricRollId: "FAB-ROLL-404",
+        actualFabricYards: actualFabric4,
+        expectedFabricYards: expectedFabric4,
+        status: OrderStatus.PENDING_VERIFICATION,
+        createdById: supervisor.id,
+        verificationItems: {
+          create: cropComps.map((comp) => ({
+            recipeComponentId: comp.id,
+            expectedQty: comp.piecesPerGarment * targetQty4,
+            actualQty: null,
+            status: null,
+          })),
+        },
+      },
+    });
+    console.log("✅ Seeded Pending Demo Order: ORD-DEMO-004");
   }
 
   console.log("\n🎉 Seeding complete!");

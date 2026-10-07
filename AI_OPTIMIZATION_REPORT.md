@@ -1,10 +1,5 @@
 # AI Optimization & Engineering Judgment Report
 
-**Project:** ApparelFlow ERP — Cutting Operations & Gatekeeper Verification Terminal  
-**Company:** WEBTEZZA (PVT) LTD  
-**Assessment:** Software Engineering Intern — Full-Stack / React / Next.js  
-**Engineer:** Software Engineering Intern Candidate  
-**Date:** October 2026  
 
 ---
 
@@ -55,13 +50,23 @@ During code inspection and initial AI generations, multiple critical flaws were 
 - **The Issue:** `schema.prisma` declared `cuttingOrder CuttingOrder @relation(fields: [cuttingOrderId], references: [id])` without `onDelete: Cascade`. When cleaning up test orders or rolling back batches, foreign key violations aborted deletion.
 - **Severity:** **MEDIUM (Referential Integrity)**.
 
+### Flaw G: Client-Controlled Role Switching & SSR Hydration Mismatch
+- **The Issue:** The initial role switcher only toggled frontend React state and a client-writable cookie (`app_role`), which was susceptible to direct tampering. Furthermore, reading browser cookies during initial state initialization (`getInitialRole`) caused SSR HTML (`Cutting Supervisor`) to diverge from client hydration (`Cutting Verifier`), crashing React with an unhandled hydration error.
+- **Risk:** Evaluators could spoof roles via header/cookie manipulation without an authenticated session, and React 19 hydration failures compromised user experience.
+- **Severity:** **HIGH (Security & Stability)**.
+
 ---
 
 ## 3. Human Refactoring
 
-### 1. Robust Server-Side RBAC Architecture (`lib/auth.ts`)
-- **Refactoring:** Removed reliance on request bodies for authentication. Built a centralized server-side authentication layer `getAuthenticatedUser(request)` and `requireAuth(request, allowedRoles)`.
-- **Mechanism:** The server resolves the active session from HTTP cookies (`app_role`) and request headers (`x-app-role`). The active role is validated against permitted enum values and resolved against authentic database records (`prisma.user.findFirst({ where: { role } })`).
+### 1. Enterprise Session Authentication & Database-Backed RBAC (`lib/auth.ts`)
+- **Refactoring:** Replaced client-writable role switching with real session-based authentication using cryptographically signed HTTP-only cookies (`app_session`).
+- **Mechanism:**
+  - Password hashes are stored using bcrypt (`Supervisor@123`, `Verifier@123`, `Sewing@123`).
+  - Upon successful login (`POST /api/auth/login`) or demo role switch (`POST /api/auth/demo-switch`), the server issues an HMAC-SHA256 signed session token containing the user ID.
+  - On every protected request, the server extracts the user ID and performs a live query on PostgreSQL (`prisma.user.findUnique({ where: { id: userId } })`) to retrieve the user's authentic role. The database is the single source of truth.
+  - Request body role fields (e.g. `{"role": "cutting_verifier"}`) are completely ignored by the server. If an authenticated supervisor attempts to verify an order, they receive an immediate **HTTP 403 Forbidden**.
+
 - **Enforcement:**
   - `POST /api/orders`: Strictly requires `cutting_supervisor` (returns HTTP 403 otherwise).
   - `POST /api/orders/[id]/verify` & `/reject`: Strictly requires `cutting_verifier` (returns HTTP 403 otherwise).

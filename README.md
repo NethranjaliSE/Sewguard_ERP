@@ -1,8 +1,6 @@
 # ApparelFlow ERP — Cutting Operations & Gatekeeper Verification Terminal
 
-**Company:** WEBTEZZA (PVT) LTD  
-**Assessment:** Software Engineering Intern — Full-Stack / React / Next.js  
-**Technology Stack:** Next.js 16 (App Router + Turbopack), React 19, TypeScript, Prisma ORM 5.22, PostgreSQL (Supabase), Tailwind CSS v4.
+
 
 ---
 
@@ -18,22 +16,34 @@ $$\text{CUTTING ORDER} \longrightarrow \text{PENDING VERIFICATION} \longrightarr
 
 ---
 
-## 2. Three RBAC Personas
+## 2. Authentication & Demo Personas
 
-The system provides three distinct manufacturing roles with strict server-side authorization:
+The system features an enterprise-grade authentication and session system with strict server-side Role-Based Access Control (RBAC).
 
-| Role Identifier | Role Label | Permitted Operations | Restricted Operations |
-| :--- | :--- | :--- | :--- |
-| `cutting_supervisor` | **Cutting Supervisor** | Create cutting orders, select recipes, enter roll IDs & fabric yardage, monitor cutting workflow | Cannot verify/approve/reject batches, cannot access Sewing Queue |
-| `cutting_verifier` | **Cutting Verifier** | Inspect pending batches in verification terminal, enter physical counts, observe traffic lights, approve valid batches, reject with mandatory reason | Cannot create orders, cannot edit recipes, cannot access Sewing Queue |
-| `sewing_supervisor` | **Sewing Supervisor** | View verified batches in Sewing Queue, inspect component breakdown & wastage audit, start sewing assembly | Cannot access pending/rejected batches, cannot create orders, cannot verify batches |
+### Evaluator Demo Credentials
 
-### Server-Side RBAC Enforcement
-The top navbar features a demo persona switcher for evaluation convenience. However, **the frontend switcher is NOT the security boundary**:
-- All API routes verify the active persona via `lib/auth.ts` from HTTP cookies (`app_role`) and request headers (`x-app-role`).
-- Role information inside request bodies is strictly ignored to prevent client spoofing.
-- Unauthorized roles receive an immediate **HTTP 403 Forbidden**.
-- Sewing Supervisor order queries enforce `WHERE status = VERIFIED` at the database query level; unverified orders are never leaked to the client.
+The database is seeded with exactly three demo accounts with secure bcrypt password hashes:
+
+| Role | Email | Password | Allowed Operations | Restricted Operations |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cutting Supervisor** (`cutting_supervisor`) | `supervisor@apparelfow.com` | `Supervisor@123` | Create cutting orders, select BOM recipes, track cutting batches | Cannot verify/approve/reject batches, cannot access Sewing Queue, cannot start sewing |
+| **Cutting Verifier** (`cutting_verifier`) | `verifier@apparelfow.com` | `Verifier@123` | Physical count entry, Gatekeeper reconciliation terminal, approve valid batches, reject invalid batches | Cannot create orders, cannot edit recipes, cannot access Sewing Queue, cannot start sewing |
+| **Sewing Supervisor** (`sewing_supervisor`) | `sewing@apparelfow.com` | `Sewing@123` | View verified sewing queue, inspect audit logs, start sewing assembly | Cannot access pending/rejected batches, cannot create orders, cannot verify batches |
+
+> **Note:** The login endpoint also supports the alternate domain spelling `apparelflow.com` automatically.
+
+### Architecture & Security Boundary
+- **Backend as Security Boundary**: Active sessions are authenticated via an **HTTP-only secure cookie** (`app_session`). The frontend NEVER changes the authenticated role locally.
+- **Single Source of Truth**: The session cookie stores a cryptographically signed user ID (HMAC-SHA256). For every protected request, the server reads the user ID and queries the PostgreSQL database directly (`users.role`) to resolve the active role.
+- **Header Role Tabs Behavior**: The header highlights the current authenticated role (solid blue `#2563EB` badge). Clicking any inactive role tab does **NOT** switch roles. Instead, it triggers a `RoleSwitchModal` dialog.
+- **Role Switch Flow (Evaluator-Friendly)**:
+  1. Operator clicks a non-active role tab (e.g. Cutting Verifier).
+  2. A confirmation modal appears showing current account and requested role.
+  3. Clicking **Cancel** closes the modal and keeps the current role.
+  4. Clicking **Logout & Switch** invalidates the current session (`POST /api/auth/logout`), presents the login screen, and preselects the requested demo role credentials.
+  5. The user explicitly signs in to establish a new authenticated backend session.
+- **Client Role Tampering Immunity**: Any role submitted in frontend request bodies (e.g. `{ "role": "cutting_verifier" }`) is strictly ignored. If an authenticated Cutting Supervisor submits a verification approval, the server enforces their database role and immediately rejects the call with **HTTP 403 Forbidden**.
+
 
 ---
 
@@ -85,10 +95,31 @@ The top navbar features a demo persona switcher for evaluation convenience. Howe
    - Category: Crop Top, Std Fabric: 1.1 yds/piece, Wastage Cap: 8.0%
    - Components: Front Chest Panel (1), Back Support Panel (1), Neck Binding Strip (1), Hem Elastic Casing (1), Side Strap Accents (2)
 
-### Seeded Demo Accounts
-- **Cutting Supervisor:** `supervisor@apparelflow.com` (Ali Khan)
-- **Cutting Verifier:** `verifier@apparelflow.com` (Sara Ahmed)
-- **Sewing Supervisor:** `sewing@apparelflow.com` (Bilal Hussain)
+### Seeded Demo Users (Database Seed Data)
+
+The database seed script (`prisma/seed.ts`) automatically populates exactly 3 demo user accounts with pre-configured roles and bcrypt-hashed passwords:
+
+| User ID | Role Name | Role Enum | Demo Email | Demo Password | Security Hash |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `usr-supervisor-001` | **Cutting Supervisor** | `cutting_supervisor` | `supervisor@apparelfow.com` | `Supervisor@123` | Bcrypt (cost 10) |
+| `usr-verifier-001` | **Cutting Verifier** | `cutting_verifier` | `verifier@apparelfow.com` | `Verifier@123` | Bcrypt (cost 10) |
+| `usr-sewing-001` | **Sewing Supervisor** | `sewing_supervisor` | `sewing@apparelfow.com` | `Sewing@123` | Bcrypt (cost 10) |
+
+> **Credential Flexibility:** The system accepts both `apparelfow.com` and `apparelflow.com` domain variations upon login.
+
+#### Re-Seeding the Database
+To re-run the seed script and restore the default 3 users, sample recipes, and baseline cutting orders:
+```bash
+npx prisma db seed
+```
+This runs `prisma/seed.ts` via `tsx` and guarantees all 3 users exist with verified password hashes.
+
+### Seeded Demo Orders
+The database seeds multiple realistic manufacturing batches:
+- **`ORD-DEMO-001`**: Casual Blouse (50 pcs) $\implies$ `VERIFIED` (appears in Sewing Queue for immediate assembly)
+- **`ORD-DEMO-002`**: Crop Top (40 pcs) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
+- **`ORD-DEMO-003`**: Casual Blouse (60 pcs, roll `FAB-ROLL-303`) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
+- **`ORD-DEMO-004`**: Crop Top (80 pcs, roll `FAB-ROLL-404`) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
 
 ---
 
@@ -99,15 +130,23 @@ Executes the comprehensive Node.js native test suite testing all business rules 
 ```bash
 npm test
 ```
-All 8 automated tests pass:
-- **TEST 1:** All GREEN components approved by Cutting Verifier $\implies$ `VERIFIED`
-- **TEST 2:** At least one RED component blocks approval with `HTTP 422`
-- **TEST 3:** Rejecting without reason fails with `HTTP 422`
-- **TEST 4:** Cutting Supervisor cannot approve verification (`HTTP 403`)
-- **TEST 5:** Sewing Queue returns only `VERIFIED` orders
-- **TEST 6:** Cutting Verifier & Sewing Supervisor cannot create cutting orders (`HTTP 403`)
-- **TEST 7:** Sewing Supervisor can start sewing $\implies$ `SEWING_IN_PROGRESS`
-- **TEST 8:** Server-side wastage calculation matches mathematical formula
+All 16 automated tests pass:
+- **TEST 1:** Unauthenticated request to protected API returns `HTTP 401`
+- **TEST 2:** Cutting Supervisor calls verification approval API $\implies$ returns `HTTP 403 Forbidden`
+- **TEST 3:** Cutting Verifier calls verification API $\implies$ allowed to proceed and approves valid batch
+- **TEST 4:** Sewing Supervisor calls verification API $\implies$ returns `HTTP 403 Forbidden`
+- **TEST 5:** Cutting Verifier calls sewing queue $\implies$ returns `HTTP 403 Forbidden`
+- **TEST 6:** Sewing Supervisor calls sewing queue $\implies$ returns `HTTP 200` with strictly verified batches
+- **TEST 7:** Unauthenticated user attempts sewing queue $\implies$ returns `HTTP 401 Unauthorized`
+- **TEST 8:** Request body role spoofing attempt is rejected with `HTTP 403 Forbidden`
+- **TEST 9:** Server-Side Hard Stop — RED component shortage blocks approval with `HTTP 422`
+- **TEST 10:** Rejecting without a reason fails with `HTTP 422`
+- **TEST 11:** Sewing Supervisor starts sewing on `VERIFIED` batch $\implies$ transitions to `SEWING_IN_PROGRESS`
+- **TEST 12:** Server-side fabric wastage formula matches `((actual - expected)/expected) * 100`
+- **TEST 13:** `GET /api/auth/me` returns authenticated role strictly from session
+- **TEST 14:** `POST /api/auth/logout` clears and invalidates session cookie
+- **TEST 15:** `GET /api/auth/me` without session cookie returns `HTTP 401 Unauthorized`
+- **TEST 16:** Explicit login as Cutting Verifier sets authenticated role to `cutting_verifier`
 
 ### 2. Run Lint
 ```bash
