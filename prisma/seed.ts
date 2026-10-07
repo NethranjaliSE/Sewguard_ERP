@@ -273,6 +273,80 @@ async function main() {
     console.log("✅ Seeded Pending Demo Order: ORD-DEMO-002");
   }
 
+  // Order 3: Pending Verification Order (Casual Blouse batch)
+  const order3Exists = await prisma.cuttingOrder.findFirst({
+    where: { orderNo: "ORD-DEMO-003" },
+  });
+
+  if (!order3Exists) {
+    const blouseComps = await prisma.recipeComponent.findMany({
+      where: { recipeId: blouse.id },
+    });
+
+    const targetQty3 = 60;
+    const expectedFabric3 = Number((targetQty3 * blouse.stdFabricYards).toFixed(2));
+    const actualFabric3 = 110.5;
+
+    await prisma.cuttingOrder.create({
+      data: {
+        orderNo: "ORD-DEMO-003",
+        recipeId: blouse.id,
+        targetQty: targetQty3,
+        fabricRollId: "FAB-ROLL-303",
+        actualFabricYards: actualFabric3,
+        expectedFabricYards: expectedFabric3,
+        status: OrderStatus.PENDING_VERIFICATION,
+        createdById: supervisor.id,
+        verificationItems: {
+          create: blouseComps.map((comp) => ({
+            recipeComponentId: comp.id,
+            expectedQty: comp.piecesPerGarment * targetQty3,
+            actualQty: null,
+            status: null,
+          })),
+        },
+      },
+    });
+    console.log("✅ Seeded Pending Demo Order: ORD-DEMO-003");
+  }
+
+  // Order 4: Pending Verification Order (Crop Top batch)
+  const order4Exists = await prisma.cuttingOrder.findFirst({
+    where: { orderNo: "ORD-DEMO-004" },
+  });
+
+  if (!order4Exists) {
+    const cropComps = await prisma.recipeComponent.findMany({
+      where: { recipeId: cropTop.id },
+    });
+
+    const targetQty4 = 80;
+    const expectedFabric4 = Number((targetQty4 * cropTop.stdFabricYards).toFixed(2));
+    const actualFabric4 = 91.0;
+
+    await prisma.cuttingOrder.create({
+      data: {
+        orderNo: "ORD-DEMO-004",
+        recipeId: cropTop.id,
+        targetQty: targetQty4,
+        fabricRollId: "FAB-ROLL-404",
+        actualFabricYards: actualFabric4,
+        expectedFabricYards: expectedFabric4,
+        status: OrderStatus.PENDING_VERIFICATION,
+        createdById: supervisor.id,
+        verificationItems: {
+          create: cropComps.map((comp) => ({
+            recipeComponentId: comp.id,
+            expectedQty: comp.piecesPerGarment * targetQty4,
+            actualQty: null,
+            status: null,
+          })),
+        },
+      },
+    });
+    console.log("✅ Seeded Pending Demo Order: ORD-DEMO-004");
+  }
+
   console.log("\n🎉 Seeding complete!");
 }
 

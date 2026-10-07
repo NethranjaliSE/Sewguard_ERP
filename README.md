@@ -114,6 +114,13 @@ npx prisma db seed
 ```
 This runs `prisma/seed.ts` via `tsx` and guarantees all 3 users exist with verified password hashes.
 
+### Seeded Demo Orders
+The database seeds multiple realistic manufacturing batches:
+- **`ORD-DEMO-001`**: Casual Blouse (50 pcs) $\implies$ `VERIFIED` (appears in Sewing Queue for immediate assembly)
+- **`ORD-DEMO-002`**: Crop Top (40 pcs) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
+- **`ORD-DEMO-003`**: Casual Blouse (60 pcs, roll `FAB-ROLL-303`) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
+- **`ORD-DEMO-004`**: Crop Top (80 pcs, roll `FAB-ROLL-404`) $\implies$ `PENDING_VERIFICATION` (in Cutting Verifier terminal)
+
 ---
 
 ## 5. Development & Verification Commands
